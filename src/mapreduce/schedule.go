@@ -1,7 +1,7 @@
 package mapreduce
 
 import "fmt"
-
+import "sync"
 //
 // schedule() starts and waits for all tasks in the given phase (mapPhase
 // or reducePhase). the mapFiles argument holds the names of the files that
@@ -30,5 +30,23 @@ func schedule(jobName string, mapFiles []string, nReduce int, phase jobPhase, re
 	//
 	// Your code here (Part III, Part IV).
 	//
+	var done sync.WaitGroup
+	for i := 0; i < ntasks; i++ {
+		done.Add(1)
+		do_task_args := DoTaskArgs{jobName, mapFiles[i], phase, i, n_other}
+		go func(addr string, args DoTaskArgs) {
+			// defer done.Done()
+			// rpc
+			ok := call(addr, "Worker.DoTask", args, nil)
+			for !ok {
+				addr = <-registerChan;
+				ok = call(addr, "Worker.DoTask", args, nil)
+			}
+			done.Done()				// can't defer cause the registerChan maybe blocked with full
+			registerChan <- addr
+		}(<-registerChan, do_task_args)
+	}
+	done.Wait()
 	fmt.Printf("Schedule: %v done\n", phase)
+	return
 }
