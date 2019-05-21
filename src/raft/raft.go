@@ -17,7 +17,11 @@ package raft
 //   in the same server.
 //
 
-import "sync"
+import (
+	"math/rand"
+	"sync"
+	"time"
+)
 import "labrpc"
 
 // import "bytes"
@@ -43,6 +47,15 @@ type ApplyMsg struct {
 }
 
 //
+// log entry struct for Raft peer to persiste.
+// contains Command for the state machine && term when entry was received by leader
+//
+type LogEntry struct {
+	Command interface{}
+	term int
+}
+
+//
 // A Go object implementing a single Raft peer.
 //
 type Raft struct {
@@ -55,6 +68,22 @@ type Raft struct {
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 
+	// Persistent state on all servers
+	// Updated on stable storage before responding to RPCs
+	currentTerm int // latest term server has seen (initialized to 0 on first boot, increases monotonically)
+	votedFor int	// -1 means don't vote for anybody
+	log []LogEntry //each entry contains command for state machine, and term when entry was received by leader (first index is 1)
+	role int   // 0 leader, 1 candidate, 2 follower
+
+	// Volatile state on all servers:
+	commitIndex int 	// index of highest log entry known to be committed (initialized to 0, increases monotonically)
+	lastApplied int 	// index of highest log entry applied to state machine (initialized to 0, increases monotonically)
+
+	// Volatile state on leaders
+	// (Reinitialized after election)
+	nextIndex []int // for each server, index of the next log entry to send to that server (initialized to leader last log index + 1)
+	matchIndex []int // for each server, index of highest log entry known to be replicated on server
+
 }
 
 // return currentTerm and whether this server
@@ -64,6 +93,8 @@ func (rf *Raft) GetState() (int, bool) {
 	var term int
 	var isleader bool
 	// Your code here (2A).
+	term = rf.currentTerm
+	isleader = rf.role == 0
 	return term, isleader
 }
 
@@ -116,6 +147,10 @@ func (rf *Raft) readPersist(data []byte) {
 //
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
+	Term int
+	CandidateId int
+	LastLogIndex int
+	LastLogTerm int
 }
 
 //
@@ -124,6 +159,8 @@ type RequestVoteArgs struct {
 //
 type RequestVoteReply struct {
 	// Your data here (2A).
+	Term int
+	VoteGranted bool
 }
 
 //
@@ -131,6 +168,17 @@ type RequestVoteReply struct {
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
+	if args.Term < rf.currentTerm {
+		reply.Term = rf.currentTerm
+		reply.VoteGranted = false
+	} else if rf.votedFor == -1 || args.LastLogTerm < rf.log[rf.commitIndex].term ||
+		(args.LastLogTerm == rf.log[rf.commitIndex].term && args.LastLogIndex <= rf.commitIndex)  {
+		reply.Term = rf.currentTerm
+		reply.VoteGranted = true
+	} else {
+		reply.Term = rf.currentTerm
+		reply.VoteGranted = false
+	}
 }
 
 //
@@ -167,6 +215,30 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	return ok
 }
 
+type RequestAppendEntriesArgs struct {
+	Term int
+	LeaderId int
+	PrevLogIndex int
+	PrevLogTerm int
+	Entries []LogEntry
+	LeaderCommit int
+}
+
+type RequestAppendEntriesReply struct {
+	Term int
+	Success bool
+}
+
+func (rf *Raft) RequestAppendEntries(args *RequestAppendEntriesArgs, reply *RequestAppendEntriesReply) {
+	if args.Term < rf.currentTerm {
+		reply.Term = rf.currentTerm
+		reply.Success = false
+	} else if rf.log[args.PrevLogIndex].term != args.PrevLogTerm {
+		reply.Term = rf.currentTerm
+		reply.Success = false
+
+	}
+}
 
 //
 // the service using Raft (e.g. a k/v server) wants to start
@@ -222,10 +294,50 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 
 	// Your initialization code here (2A, 2B, 2C).
+	rf.currentTerm = 0
+	rf.votedFor = -1
+	rf.log = make([]LogEntry, 1)
+
+	rf.role = 2
+	rf.commitIndex = 0
+	rf.lastApplied = 0
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
+	// the function to wait for leader election
+	ch1 := make(chan int)
+	ch2 := make(chan int)
+	go func() {
+		initTimeOutdur := rand.Float32() + 0.6
+		for {
+			go TimeOut(initTimeOutdur, ch1)
+			if <- ch1 == 1 {
+				ch2 <- 1
+				initTimeOutdur = rand.Float32() + 0.6
+			} else {
+				for {
+					a := <- ch1
+					if a == 1 {
+						break
+					}
+				}
+			}
+		}
+	}()
+
+	// the function for com with others
+	go func() {
+
+	}()
 
 	return rf
+}
+
+//
+// the timeout function to wait for dur second(s)
+//
+func TimeOut(dur float32, ch chan int) {
+	time.Sleep(time.Duration(dur) * time.Second)
+	ch <- 1
 }
