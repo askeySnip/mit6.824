@@ -207,6 +207,9 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	} else {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
+		if rf.role == 0 {
+			rf.hearbeat <- 1
+		}
 	}
 	if rf.currentTerm < args.Term {
 		rf.currentTerm = args.Term
@@ -496,7 +499,6 @@ func candidateTerm(rf *Raft) {
 		case <-tch:
 			// go to leader term
 			DPrintf("%v go to leader Term", rf.me)
-			rf.role = 0
 			go leaderTerm(rf)
 			return
 		case <-timeout:
