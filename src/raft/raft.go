@@ -198,7 +198,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	DPrintf("Calling Request Vote %v", rf.me)
-	if args.Term < rf.currentTerm {
+	if args.Term <= rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
 	} else if rf.votedFor == -1 || uptodate(args, rf) {
@@ -529,23 +529,27 @@ func election(rf *Raft, ch chan int) {
 			reply := RequestVoteReply{0, false}
 			if ok := rf.sendRequestVote(id, &args, &reply); ok {
 				rf.mu.Lock()
-				if reply.VoteGranted {
-					voteCount++
-					if voteCount == len(rf.peers)/2+1 {
-						ch <- 1
-					}
+				defer rf.mu.Unlock()
+				if rf.role == 2 {
+					return
 				}
 				if reply.Term > rf.currentTerm {
 					rf.currentTerm = reply.Term
 					rf.role = 2
 					rf.hearbeat <- 1
 				}
-				rf.mu.Unlock()
+				if rf.role == 0 {
+					return
+				}
+				if reply.VoteGranted {
+					voteCount++
+					if voteCount == len(rf.peers)/2+1 {
+						ch <- 1
+					}
+				}
 			}
 		}(i, rf)
 	}
-	DPrintf("%v gets %v votes", rf.me, voteCount)
-	DPrintf("%v end election", rf.me)
 
 }
 
