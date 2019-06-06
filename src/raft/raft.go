@@ -372,6 +372,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		index = len(rf.log)
 		rf.log = append(rf.log, LogEntry{Command: command, Term: rf.currentTerm})
 		rf.matchIndex[rf.me] = index
+		rf.persist()
 		DPrintf("%v accept client command: %v", rf.me, rf.log[len(rf.log)-1])
 	}
 	rf.mu.Unlock()
@@ -520,38 +521,28 @@ func election(rf *Raft, ch chan int) {
 	// set the voteCount = 1 (voteFor self first)
 	voteCount := 1
 
-	old := false
-
 	for i := range rf.peers {
 		if i == rf.me {
 			continue
 		}
 		go func(id int, rf *Raft) {
 			reply := RequestVoteReply{0, false}
-			for i := 0; i < 3; i++ {
-				if ok := rf.sendRequestVote(id, &args, &reply); ok {
-					rf.mu.Lock()
-					if reply.VoteGranted {
-						voteCount++
-						if voteCount == len(rf.peers)/2+1 {
-							ch <- 1
-						}
+			if ok := rf.sendRequestVote(id, &args, &reply); ok {
+				rf.mu.Lock()
+				if reply.VoteGranted {
+					voteCount++
+					if voteCount == len(rf.peers)/2+1 {
+						ch <- 1
 					}
-					if reply.Term > rf.currentTerm {
-						rf.currentTerm = reply.Term
-						rf.role = 2
-						old = true
-					}
-					rf.mu.Unlock()
-					break
 				}
+				if reply.Term > rf.currentTerm {
+					rf.currentTerm = reply.Term
+					rf.role = 2
+					rf.hearbeat <- 1
+				}
+				rf.mu.Unlock()
 			}
 		}(i, rf)
-	}
-	if old {
-		rf.hearbeat <- 1
-		DPrintf("%v is old", rf.me)
-		return
 	}
 	DPrintf("%v gets %v votes", rf.me, voteCount)
 	DPrintf("%v end election", rf.me)
@@ -613,7 +604,7 @@ func confCommit(rf *Raft, term int) {
 				DPrintf("%v sending committed %v", rf.me, ApplyMsg{true, rf.log[j].Command, j})
 			}
 			rf.lastApplied = rf.commitIndex
-			go sendHeartBeat(rf)
+			//go sendHeartBeat(rf)
 			break
 		}
 	}
@@ -643,34 +634,31 @@ func sendHeartBeat(rf *Raft) {
 			entries := rfLog[rfNextIndex[id]:]
 			args := RequestAppendEntriesArgs{rfTerm, irf.me, rfNextIndex[id] - 1,
 				rfLog[rfNextIndex[id]-1].Term, entries, rfCommitIndex}
-			for i := 0; i < 3; i++ {
-				if ok := irf.sendRequestAppendEntries(id, &args, &reply); ok {
-					DPrintf("%v send heart beat success to %v", irf.me, id)
-					irf.mu.Lock()
-					if irf.role != 0 {
-						irf.mu.Unlock()
-						return
-					}
-					if reply.Term > irf.currentTerm {
-						irf.currentTerm = reply.Term
-						irf.role = 2
-						irf.hearbeat <- 1
-						irf.mu.Unlock()
-						return
-					}
-					if reply.Success {
-						irf.nextIndex[id] = len(rfLog)
-						irf.matchIndex[id] = irf.nextIndex[id] - 1
-						// check whether have some log could commit
-						go confCommit(irf, rfTerm)
-					} else {
-						if reply.Term == rfTerm {
-							irf.nextIndex[id] = reply.ConflictIndex
-						}
-					}
+			if ok := irf.sendRequestAppendEntries(id, &args, &reply); ok {
+				DPrintf("%v send heart beat success to %v", irf.me, id)
+				irf.mu.Lock()
+				if irf.role != 0 {
 					irf.mu.Unlock()
-					break
+					return
 				}
+				if reply.Term > irf.currentTerm {
+					irf.currentTerm = reply.Term
+					irf.role = 2
+					irf.hearbeat <- 1
+					irf.mu.Unlock()
+					return
+				}
+				if reply.Success {
+					irf.nextIndex[id] = len(rfLog)
+					irf.matchIndex[id] = irf.nextIndex[id] - 1
+					// check whether have some log could commit
+					go confCommit(irf, rfTerm)
+				} else {
+					if reply.Term == rfTerm {
+						irf.nextIndex[id] = reply.ConflictIndex
+					}
+				}
+				irf.mu.Unlock()
 			}
 		}(i, rf)
 	}
