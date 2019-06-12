@@ -201,6 +201,9 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if args.Term <= rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
+		if rf.role == 0 {
+			rf.hearbeat <- 1
+		}
 	} else if rf.votedFor == -1 || uptodate(args, rf) {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = true
