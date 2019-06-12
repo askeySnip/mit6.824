@@ -197,22 +197,32 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	if rf.role != 2 && args.Term > rf.currentTerm {
+		rf.currentTerm = args.Term
+		rf.hearbeat <- 1
+		if rf.votedFor == -1 || uptodate(args, rf) {
+			reply.Term = rf.currentTerm
+			reply.VoteGranted = true
+			rf.votedFor = args.CandidateId
+		} else {
+			reply.Term = rf.currentTerm
+			reply.VoteGranted = false
+		}
+		return
+	}
 	DPrintf("Calling Request Vote %v", rf.me)
 	if args.Term <= rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
-		if rf.role == 0 {
-			rf.hearbeat <- 1
-		}
 	} else if rf.votedFor == -1 || uptodate(args, rf) {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = true
 	} else {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
-		if rf.role == 0 {
-			rf.hearbeat <- 1
-		}
+		//if rf.role == 0 {
+		//	rf.hearbeat <- 1
+		//}
 	}
 	if rf.currentTerm < args.Term {
 		rf.currentTerm = args.Term
@@ -296,6 +306,11 @@ func Min(a, b int) int {
 func (rf *Raft) RequestAppendEntries(args *RequestAppendEntriesArgs, reply *RequestAppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	if rf.role != 2 && rf.currentTerm < args.Term {
+		rf.currentTerm = args.Term
+		rf.hearbeat <- 1;
+		return
+	}
 	DPrintf("append entries args : %v", args)
 	DPrintf("raft %v status :\n log: %v\n term: %v", rf.me, rf.log, rf.currentTerm)
 	if args.Term < rf.currentTerm {
@@ -613,6 +628,7 @@ func confCommit(rf *Raft, term int) {
 				DPrintf("%v sending committed %v", rf.me, ApplyMsg{true, rf.log[j].Command, j})
 			}
 			rf.lastApplied = rf.commitIndex
+			DPrintf("have commited num : %v", rf.lastApplied)
 			//go sendHeartBeat(rf)
 			break
 		}
