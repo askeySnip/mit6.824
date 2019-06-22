@@ -1,13 +1,15 @@
 package raftkv
 
-import "labrpc"
+import (
+	"labrpc"
+)
 import "crypto/rand"
 import "math/big"
-
 
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// You will have to modify this struct.
+	currentleader int
 }
 
 func nrand() int64 {
@@ -21,6 +23,7 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
 	// You'll have to add code here.
+	ck.currentleader = 0
 	return ck
 }
 
@@ -37,9 +40,30 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 // arguments. and reply must be passed as a pointer.
 //
 func (ck *Clerk) Get(key string) string {
-
+	//DPrintf("client get ")
+	args := GetArgs{key, nrand()}
+	ld := ck.currentleader
+	for {
+		reply := GetReply{}
+		ok := ck.servers[ld].Call("KVServer.Get", &args, &reply)
+		//DPrintf("rpc call returned")
+		if ok {
+			if reply.WrongLeader {
+				ld = (ld + 1) % len(ck.servers)
+			} else {
+				//DPrintf("client get success")
+				if reply.Err != "" {
+					continue
+				}
+				ck.currentleader = ld
+				return reply.Value
+			}
+		} else {
+			ld = (ld + 1) % len(ck.servers)
+		}
+	}
 	// You will have to modify this function.
-	return ""
+	//return ""
 }
 
 //
@@ -54,6 +78,30 @@ func (ck *Clerk) Get(key string) string {
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
+	//DPrintf("client put append")
+	args := PutAppendArgs{key, value, op, nrand()}
+	//DPrintf("%v", args)
+	//DPrintf("key:%v, value:%v, op:%v", key, value, op)
+	ld := ck.currentleader
+	for {
+		reply := PutAppendReply{}
+		ok := ck.servers[ld].Call("KVServer.PutAppend", &args, &reply)
+		//DPrintf("rpc call %v returned : %v %v", args, ok, reply)
+		if ok {
+			if reply.WrongLeader {
+				ld = (ld + 1) % len(ck.servers)
+			} else {
+				//DPrintf("Client Put Append Success")
+				if reply.Err != "" {
+					continue
+				}
+				ck.currentleader = ld
+				return
+			}
+		} else {
+			ld = (ld + 1) % len(ck.servers)
+		}
+	}
 }
 
 func (ck *Clerk) Put(key string, value string) {
